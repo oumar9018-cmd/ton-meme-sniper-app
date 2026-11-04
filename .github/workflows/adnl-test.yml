@@ -1,0 +1,150 @@
+# ADNL Block-0 test — branch adnl-test only, read-only, no trade, no keys.
+# Runs on push to adnl-test (so the initial push triggers it) and on
+# workflow_dispatch. Result is committed back as adnl-test/ADNL-RESULT.md
+# with [skip ci], so no log API is needed to read the outcome.
+name: adnl-test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [adnl-test]
+
+permissions:
+  contents: write
+
+jobs:
+  adnl-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - name: Build parser
+        id: build
+        run: |
+          cd adnl-test
+          go vet ./... 2>&1 | tee build.log; echo "vet_exit=${PIPESTATUS[0]}" >> build.log
+          go build -o trench-block0-parser . 2>&1 | tee -a build.log; echo "build_exit=${PIPESTATUS[0]}" >> build.log
+          ls -l trench-block0-parser 2>&1 | tee -a build.log || true
+          cat build.log
+      - name: One master block + shards
+        if: always()
+        run: |
+          cd adnl-test
+          date +%s > once_start.txt
+          if [ -x ./trench-block0-parser ]; then ./trench-block0-parser --once --timeout 60s > once.log 2>&1; echo $? > once.exit; else echo "binary missing, build failed" > once.log; echo 127 > once.exit; fi
+          date +%s > once_end.txt
+          echo "once_exit=$(cat once.exit)"
+          head -c 4000 once.log
+      - name: Watch up to 5 master blocks
+        if: always()
+        run: |
+          cd adnl-test
+          date +%s > watch_start.txt
+          if [ -x ./trench-block0-parser ]; then ./trench-block0-parser --watch --max-blocks 5 --timeout 5m > watch.log 2>&1; echo $? > watch.exit; else echo "binary missing, build failed" > watch.log; echo 127 > watch.exit; fi
+          date +%s > watch_end.txt
+          echo "watch_exit=$(cat watch.exit)"
+          head -c 4000 watch.log
+      - name: Summarise and commit result
+        if: always()
+        run: |
+          cd adnl-test
+          python3 - <<'PY'
+          import json, re
+          def load(p):
+              try:
+                  with open(p) as f: return f.read()
+              except Exception as e:
+                  return f"<missing {p}: {e}>"
+          def stats(log):
+              js, deploy, pool, masters, maxt = [], 0, 0, set(), 0
+              for line in log.splitlines():
+                  line=line.strip()
+                  if not line.startswith("{"): continue
+                  try: ev=json.loads(line)
+                  except Exception: continue
+                  js.append(ev)
+                  if ev.get("type")=="deploy": deploy+=1
+                  if ev.get("type")=="pool_candidate": pool+=1
+                  if ev.get("block_workchain")==-1: masters.add(ev.get("block_seqno"))
+                  if ev.get("block_time",0)>maxt: maxt=ev["block_time"]
+              return len(js), deploy, pool, sorted(masters), maxt
+          def txt(p, d=""):
+              try:
+                  with open(p) as f: return f.read().strip()
+              except Exception: return d
+          once, watch = load("once.log"), load("watch.log")
+          oj, od, op, om, omt = stats(once)
+          wj, wd, wp, wm, wmt = stats(watch)
+          once_exit, watch_exit = txt("once.exit","?"), txt("watch.exit","?")
+          once_start, once_end = txt("once_start.txt","?"), txt("once_end.txt","?")
+          err_lines = [l for l in (once+ "\n" + watch).splitlines() if "ERROR" in l or "stage=" in l][:20]
+          info_lines = [l for l in (once+ "\n" + watch).splitlines() if l.startswith("INFO")][:20]
+          lat = ""
+          try:
+              if omt: lat = f"once_end_epoch={once_end}, max_block_time={omt}, upper_bound_latency_s={int(once_end)-omt} (run-level only: parser does not timestamp each event, so this is NOT per-event first-seen latency)"
+          except Exception as e:
+              lat = f"latency not computable: {e}"
+          out = []
+          out.append("# ADNL test result (GitHub Actions, branch adnl-test)")
+          out.append("")
+          out.append("Read-only block parsing only. No wallet, no key, no signing, no trade.")
+          out.append("Job conclusion alone is NOT an ADNL pass; the exit files below are the truth.")
+          out.append("")
+          out.append("## Run")
+          out.append("")
+          out.append("- run_id: $GITHUB_RUN_ID (see workflow run for this id)")
+          out.append("- run_number: $GITHUB_RUN_NUMBER")
+          out.append("- ref: $GITHUB_REF")
+          out.append("- sha: $GITHUB_SHA")
+          out.append("")
+          out.append("## Build")
+          out.append("")
+          out.append("```")
+          out.append(load("build.log")[:2000])
+          out.append("```")
+          out.append("")
+          out.append("## --once")
+          out.append("")
+          out.append(f"- exit: {once_exit}")
+          out.append(f"- start_epoch: {once_start}, end_epoch: {once_end}")
+          out.append(f"- json_events: {oj}, deploy: {od}, pool_candidate: {op}")
+          out.append(f"- master_seqnos_in_events: {om}")
+          out.append(f"- latency: {lat}")
+          out.append("")
+          out.append("## --watch (max 5 master blocks)")
+          out.append("")
+          out.append(f"- exit: {watch_exit}")
+          out.append(f"- json_events: {wj}, deploy: {wd}, pool_candidate: {wp}")
+          out.append(f"- master_seqnos_in_events: {wm}")
+          out.append(f"- max_block_time: {wmt}")
+          out.append("")
+          out.append("## ERROR / stage lines (first 20)")
+          out.append("")
+          out.append("```")
+          out.append("\n".join(err_lines) if err_lines else "(none)")
+          out.append("```")
+          out.append("")
+          out.append("## INFO lines (first 20)")
+          out.append("")
+          out.append("```")
+          out.append("\n".join(info_lines) if info_lines else "(none)")
+          out.append("```")
+          out.append("")
+          out.append("## Pass criteria (draft)")
+          out.append("")
+          out.append(f"1. ADNL connect succeeds (no stage=connect error): {'PASS' if once_exit=='0' else 'FAIL'}")
+          out.append(f"2. --once real JSON events incl. a deploy: {'PASS' if oj>0 and od>0 else 'FAIL'}")
+          out.append(f"3. --watch parses successive masters without hang/dup: {'PASS' if watch_exit=='0' and len(wm)>=2 else 'FAIL / NOT PROVEN'}")
+          out.append("4. Measured GenUtime vs first-seen latency: run-level upper bound only, see latency line above; no <2s claim unless per-event proof exists.")
+          out.append("")
+          with open("ADNL-RESULT.md","w") as f: f.write("\n".join(out)+"\n")
+          print("wrote ADNL-RESULT.md")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ADNL-RESULT.md
+          git commit -m "[skip ci] ADNL test result run $GITHUB_RUN_ID" || echo "nothing to commit"
+          git push origin adnl-test || echo "push result failed"
