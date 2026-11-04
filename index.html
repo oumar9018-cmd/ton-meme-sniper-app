@@ -25,6 +25,11 @@
 <main>
   <!-- NEW COINS -->
   <section id="feed" class="screen active" aria-label="New Coins">
+    <div class="filters" role="group" aria-label="Coin filters">
+      <button type="button" class="filter active" data-filter="all">All Coins</button>
+      <button type="button" class="filter" data-filter="new">Just Launched</button>
+      <button type="button" class="filter" data-filter="trending">Trending Up</button>
+    </div>
     <label class="toggle-row">
       <span>Hidden / Risky coins dekho</span>
       <input id="showHidden" type="checkbox">

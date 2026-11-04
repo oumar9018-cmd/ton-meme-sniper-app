@@ -6,7 +6,7 @@ if (window.Telegram && window.Telegram.WebApp) {
 // No wallet, no TON Connect, no real transaction, no network call is made.
 const COINS = [
   {
-    id: "novac", name: "NovaCat", symbol: "NOVAC", age: "launched 4 min ago",
+    id: "novac", name: "NovaCat", symbol: "NOVAC", age: "launched 4 min ago", ageMin: 4, gradient: "linear-gradient(135deg,#7c3aed,#ec4899)", mcap: "$182,000 (demo)", volume: "$24,300 (demo)",
     price: "0.00042 TON", change: "+18.4%", chart: [12,18,15,22,28,26,34,42], light: "green", lightLabel: "Green",
     reason: "Holders badh rahe, liquidity locked, dev % kam.",
     holders: "1,284 holders (demo)", liquidity: "$48,000 (demo)",
@@ -15,7 +15,7 @@ const COINS = [
     firstBuyers: "First 20 buyers: mostly small retail (demo)"
   },
   {
-    id: "sant", name: "Stellar Ant", symbol: "SANT", age: "launched 18 min ago",
+    id: "sant", name: "Stellar Ant", symbol: "SANT", age: "launched 18 min ago", ageMin: 18, gradient: "linear-gradient(135deg,#0ea5e9,#14b8a6)", mcap: "$96,000 (demo)", volume: "$11,200 (demo)",
     price: "0.00031 TON", change: "+9.2%", chart: [10,14,13,19,22,20,27,31], light: "green", lightLabel: "Green",
     reason: "Liquidity locked, no honeypot flag in demo check.",
     holders: "962 holders (demo)", liquidity: "$31,500 (demo)",
@@ -24,7 +24,7 @@ const COINS = [
     firstBuyers: "First 20 buyers: mixed retail (demo)"
   },
   {
-    id: "pfrog", name: "Pixel Frog", symbol: "PFROG", age: "launched 31 min ago",
+    id: "pfrog", name: "Pixel Frog", symbol: "PFROG", age: "launched 31 min ago", ageMin: 31, gradient: "linear-gradient(135deg,#16a34a,#a3e635)", mcap: "$41,000 (demo)", volume: "$5,600 (demo)",
     price: "0.00018 TON", change: "-4.1%", chart: [30,27,29,24,22,25,21,19], light: "yellow", lightLabel: "Yellow — Risky",
     reason: "Dev holds some supply — buy with extra caution.",
     holders: "540 holders (demo)", liquidity: "$9,800 (demo)",
@@ -33,7 +33,7 @@ const COINS = [
     firstBuyers: "First 20 buyers: 3 large wallets (demo)"
   },
   {
-    id: "qpump", name: "QuickPump", symbol: "QPUMP", age: "launched 9 min ago",
+    id: "qpump", name: "QuickPump", symbol: "QPUMP", age: "launched 9 min ago", ageMin: 9, gradient: "linear-gradient(135deg,#f97316,#dc2626)", mcap: "$8,400 (demo)", volume: "$2,900 (demo)",
     price: "0.00009 TON", change: "-31.0%", chart: [28,24,26,18,14,16,10,7], light: "red", lightLabel: "Red — Hidden by default",
     reason: "Honeypot simulation failed in demo check — do not buy.",
     holders: "210 holders (demo)", liquidity: "$2,100 (demo)",
@@ -48,22 +48,34 @@ let selectedAmount = 1;
 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
+
+function chartSVG(c, big) {
+  const max = Math.max(...c.chart), min = Math.min(...c.chart), range = (max - min) || 1;
+  const pts = c.chart.map((v,i)=>`${(i*(100/(c.chart.length-1))).toFixed(1)},${(52-((v-min)/range)*44).toFixed(1)}`).join(" ");
+  const color = c.change.startsWith("+") ? "#059669" : "#dc2626";
+  return `<svg class="chart ${big ? "big" : ""}" viewBox="0 0 100 56" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="g${c.id}${big?"b":""}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.25"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><polygon points="0,56 ${pts} 100,56" fill="url(#g${c.id}${big?"b":""})"/><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+let activeFilter = "all";
 function renderFeed() {
   const showHidden = document.getElementById("showHidden").checked;
   const list = document.getElementById("feedList");
-  const visible = COINS.filter(c => c.light !== "red" || showHidden);
+  let visible = COINS.filter(c => c.light !== "red" || showHidden);
+  if (activeFilter === "new") visible = visible.filter(c => c.ageMin <= 20);
+  if (activeFilter === "trending") visible = visible.filter(c => c.change.startsWith("+"));
   list.innerHTML = visible.map(c => `
     <article class="coin-card ${c.light}" data-id="${c.id}">
       <div class="coin-head" data-detail="${c.id}">
-        <span class="logo">${esc(c.symbol.slice(0, 2))}</span>
+        <span class="logo" style="background:${c.gradient}">${esc(c.symbol.slice(0, 2))}</span>
         <div><h2>${esc(c.name)} <span style="color:var(--muted);font-weight:400">${esc(c.symbol)}</span></h2>
-        <p>${esc(c.age)} &middot; DEMO DATA</p></div>
-        <div class="price"><span class="dot ${c.light}" aria-label="${c.lightLabel}"></span> <strong>${c.price}</strong><br><span class="${c.change.startsWith("+") ? "up" : "down"}">${c.change}</span></div>
+        <p><span class="age">${esc(c.age)}</span> &middot; DEMO DATA</p></div>
+        <div class="price"><span class="dot ${c.light}" aria-label="${c.lightLabel}"></span> <strong>${c.price}</strong><br><span class="pill ${c.change.startsWith("+") ? "up" : "down"}">${c.change}</span></div>
       </div>
       <p class="reason" data-detail="${c.id}">${esc(c.reason)} Tap card for breakdown.</p>
-      <svg class="chart" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true"><polyline points="${c.chart.map((v,i)=>`${i*(100/(c.chart.length-1))},${32-v}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>
+      ${chartSVG(c, false)}
+      <div class="stats"><div class="stat"><span>Holders</span><strong>${esc(c.holders.split(" ")[0])}</strong></div><div class="stat"><span>Liquidity</span><strong>${esc(c.liquidity.split(" ")[0])}</strong></div><div class="stat"><span>Market Cap</span><strong>${esc(c.mcap.split(" ")[0])}</strong></div></div>
       <div class="buy-row">
-        ${[0.5, 1, 2].map(a => `<button type="button" data-buy="${c.id}" data-amount="${a}" ${c.light === "red" ? "disabled" : ""}>Buy ${a} TON (DEMO)</button>`).join("")}
+        <button type="button" class="main" data-buy="${c.id}" data-amount="1" ${c.light === "red" ? "disabled" : ""}>Buy 1 TON (DEMO)</button>
+        ${[0.5, 2].map(a => `<button type="button" data-buy="${c.id}" data-amount="${a}" ${c.light === "red" ? "disabled" : ""}>${a} TON</button>`).join("")}
       </div>
       ${c.light === "red" ? `<p class="hint">Buy disabled: ${esc(c.reason)}</p>` : ""}
     </article>`).join("");
@@ -85,11 +97,13 @@ function openDetail(id) {
     <span class="demo-badge">DEMO DATA</span>
     <h2>${esc(c.name)} (${esc(c.symbol)})</h2>
     <p>${esc(c.price)} &middot; <span class="${c.change.startsWith("+") ? "up" : "down"}">${esc(c.change)}</span> &middot; <span class="dot ${c.light}"></span> ${esc(c.lightLabel)} &middot; ${esc(c.age)}</p>
-    <svg class="chart big" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true"><polyline points="${c.chart.map((v,i)=>`${i*(100/(c.chart.length-1))},${32-v}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>
+    ${chartSVG(c, true)}
     <p>${esc(c.reason)}</p>
     <dl>
       <dt>Holders</dt><dd>${esc(c.holders)}</dd>
       <dt>Liquidity</dt><dd>${esc(c.liquidity)}</dd>
+      <dt>Market Cap</dt><dd>${esc(c.mcap)}</dd>
+      <dt>Volume</dt><dd>${esc(c.volume)}</dd>
       <dt>LP lock</dt><dd>${esc(c.lpLock)}</dd>
       <dt>Mint admin</dt><dd>${esc(c.mintAdmin)}</dd>
       <dt>Top holders</dt><dd>${esc(c.topHolders)}</dd>
@@ -145,4 +159,10 @@ document.querySelectorAll(".sheet-backdrop").forEach(bd => {
   bd.addEventListener("click", (e) => { if (e.target === bd) bd.classList.add("hidden"); });
 });
 
+document.querySelectorAll(".filter").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".filter").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active"); activeFilter = btn.dataset.filter; renderFeed();
+  });
+});
 renderFeed();
