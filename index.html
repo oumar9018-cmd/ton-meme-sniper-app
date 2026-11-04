@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TON Meme Sniper — Magic Screen (DEMO Prototype)</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="hero">
+  <div class="hero-top">
+    <div>
+      <h1>TON Meme Sniper</h1>
+      <p class="subtitle">New Coins — early coins, simple view</p>
+    </div>
+    <span class="demo-badge">DEMO DATA</span>
+  </div>
+  <p class="demo-note">All coins, prices, charts and profits below are MOCK demo data. No real coin, no real price, no real trade.</p>
+  <nav class="tabs" aria-label="Screens">
+    <button class="tab active" data-tab="feed" type="button">New Coins</button>
+    <button class="tab" data-tab="dashboard" type="button">Profit Dashboard</button>
+  </nav>
+</header>
+
+<main>
+  <!-- NEW COINS -->
+  <section id="feed" class="screen active" aria-label="New Coins">
+    <label class="toggle-row">
+      <span>Hidden / Risky coins dekho</span>
+      <input id="showHidden" type="checkbox">
+      <span class="switch" aria-hidden="true"></span>
+    </label>
+    <p class="hint" id="hiddenHint">Red coins are hidden by default. Turn the toggle on to see them — Buy stays disabled.</p>
+    <div id="feedList" class="feed-list"></div>
+  </section>
+
+  <!-- PROFIT DASHBOARD -->
+  <section id="dashboard" class="screen" aria-label="Profit Dashboard">
+    <span class="demo-badge inline">DEMO DATA</span>
+    <div class="dash-grid">
+      <div class="dash-card"><span class="label">Invested</span><strong>5.0 TON</strong></div>
+      <div class="dash-card"><span class="label">Current Value (holdings)</span><strong>8.4 TON</strong></div>
+      <div class="dash-card good"><span class="label">Realized P/L</span><strong>+1.1 TON</strong></div>
+      <div class="dash-card good"><span class="label">Unrealized P/L</span><strong>+3.4 TON</strong></div>
+    </div>
+    <p class="warning">Low-liquidity warning: one holding has thin liquidity — selling the full amount at once may move the price down. Demo numbers only.</p>
+    <div class="dash-list">
+      <div class="dash-row"><span>NOVAC (demo)</span><span>2.0 TON in &rarr; 4.1 TON now</span></div>
+      <div class="dash-row"><span>PFROG (demo)</span><span>1.5 TON in &rarr; 1.9 TON now</span></div>
+      <div class="dash-row"><span>SANT (demo)</span><span>1.5 TON in &rarr; 2.4 TON now</span></div>
+    </div>
+    <button class="sleep-btn" type="button" disabled>Sleep Mode (Auto-Sell) — Phase 2 (Vault)</button>
+    <p class="hint">Sleep Mode is disabled in this Phase 1 prototype. Auto-sell needs the Phase 2 Vault and is not real here.</p>
+  </section>
+</main>
+
+<!-- BREAKDOWN SHEET -->
+<div id="detailSheet" class="sheet-backdrop hidden" role="dialog" aria-modal="true" aria-label="Coin breakdown">
+  <div class="sheet">
+    <button class="close" data-close="detailSheet" type="button" aria-label="Close">&times;</button>
+    <div id="detailBody"></div>
+  </div>
+</div>
+
+<!-- BUY CONFIRM SHEET -->
+<div id="buySheet" class="sheet-backdrop hidden" role="dialog" aria-modal="true" aria-label="Buy confirmation">
+  <div class="sheet">
+    <button class="close" data-close="buySheet" type="button" aria-label="Close">&times;</button>
+    <div id="buyBody"></div>
+  </div>
+</div>
+
+<!-- DEMO SUCCESS SHEET -->
+<div id="successSheet" class="sheet-backdrop hidden" role="dialog" aria-modal="true" aria-label="Demo success">
+  <div class="sheet">
+    <button class="close" data-close="successSheet" type="button" aria-label="Close">&times;</button>
+    <div id="successBody"></div>
+  </div>
+</div>
+
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
