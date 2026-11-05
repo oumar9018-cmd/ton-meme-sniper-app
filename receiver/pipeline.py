@@ -13,9 +13,17 @@ How it runs on any host (Linux, server, Termux phone):
   No key, token, host, or DEX address is hard-coded anywhere here.
 
 Pipeline, per event, in order:
-  1. Receiver: POST /webhook -> 200 on valid JSON, 400 on invalid
-     JSON, 401 on a wrong Bearer token, duplicate Idempotency-Key
-     acknowledged with 200 but not logged or processed twice.
+  1. Receiver: POST /webhook -> 200 IMMEDIATELY after validating
+     JSON, Bearer token, and the dedupe check. Slow work (pre-filter
+     + enrich + result logging) runs in a background worker, never
+     on the request path, so a slow TonAPI call cannot hold the
+     webhook response open. 400 on invalid JSON, 401 on a wrong
+     Bearer token, duplicate Idempotency-Key acknowledged with 200
+     but not logged or processed twice. The 200 body reports
+     {"ok": true, "queued": true} (or "queued": false with
+     "reason": "queue_full" if the bounded work queue is full);
+     the decision/reason are NOT in the response — they land in
+     alerts.jsonl / dropped.jsonl when the worker finishes.
   2. Pre-filter: ONE TonAPI account call only.
        - missing account_id -> DROP, 0 calls
        - is_wallet true, or interfaces contain a wallet_* entry -> DROP wallet, 1 call
@@ -34,7 +42,11 @@ Pipeline, per event, in order:
      No score, no Gem wording, no safe / not-a-rug label.
   4. Output: PASS lines go to alerts.jsonl, DROP lines to
      dropped.jsonl, every accepted event to events.jsonl, all next
-     to this script unless --out-dir is given.
+     to this script unless --out-dir is given. In server mode the
+     events.jsonl write happens before the 200; the PASS/DROP
+     write happens in the background worker when processing
+     finishes. A shed event (queue full) is logged to dropped.jsonl
+     with reason "queue_full" at ack time.
 
 Phase 1 only: detection + alert-ready log. No wallet, no signing,
 no trade, no auto-buy, no Vault, no webhook creation here. A live
@@ -48,7 +60,9 @@ and never logs an Authorization header value.
 import argparse
 import json
 import os
+import queue
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -58,6 +72,62 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 POOL_MARKERS = ("stonfi_pool", "dedust_pool", "pool")
 SEEN_KEYS = set()
+_SEEN_LOCK = threading.Lock()
+_WRITE_LOCK = threading.Lock()
+
+# Bounded background worker (fast-ack design).
+# The request handler answers 200 as soon as the event is validated
+# and recorded; pre-filter + enrich runs on worker threads. Bounds:
+#   WORKERS = 4 concurrent enrichment threads max
+#   QUEUE_MAX = 16 events waiting for a worker
+# A firehose burst beyond 4 in-flight + 16 queued is NOT queued
+# unboundedly: the handler logs a "queue_full" DROP record and
+# still answers 200 (so the sender does not retry a delivery we
+# deliberately shed). No thread is ever spawned per request.
+WORKERS = 4
+QUEUE_MAX = 16
+_WORK_QUEUE = queue.Queue(maxsize=QUEUE_MAX)
+_WORKERS_STARTED = False
+_WORKERS_LOCK = threading.Lock()
+
+
+def _append_record(out_dir, name, record):
+    """Append one JSONL record. Serialised so concurrent workers
+    and request threads never interleave lines in the same file."""
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+    with _WRITE_LOCK:
+        with open(os.path.join(out_dir, name), "a", encoding="utf-8") as f:
+            f.write(line)
+
+
+def _worker(out_dir):
+    """One background worker: process events until the process exits."""
+    while True:
+        event = _WORK_QUEUE.get()
+        try:
+            result = process_event(event)
+            _append_record(out_dir, "alerts.jsonl" if result["decision"] == "PASS" else "dropped.jsonl", result)
+        except Exception as exc:  # never let one bad event kill the worker
+            sys.stderr.write(f"[pipeline] worker error: {exc!r}\n")
+            _append_record(out_dir, "dropped.jsonl", {
+                "received_at": utcnow(),
+                "account_id": (event or {}).get("account_id", "unknown"),
+                "decision": "DROP", "reason": "worker_error",
+                "call_count": 0, "calls": []})
+        finally:
+            _WORK_QUEUE.task_done()
+
+
+def _ensure_workers(out_dir):
+    """Start the fixed worker pool once (daemon threads)."""
+    global _WORKERS_STARTED
+    with _WORKERS_LOCK:
+        if _WORKERS_STARTED:
+            return
+        for _ in range(WORKERS):
+            t = threading.Thread(target=_worker, args=(out_dir,), daemon=True)
+            t.start()
+        _WORKERS_STARTED = True
 
 
 def utcnow():
@@ -197,8 +267,7 @@ def make_handler(out_dir, expected_token):
             self.wfile.write(body)
 
         def _append(self, name, record):
-            with open(os.path.join(out_dir, name), "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            _append_record(out_dir, name, record)
 
         def do_POST(self):
             if self.path != "/webhook":
@@ -219,17 +288,31 @@ def make_handler(out_dir, expected_token):
                     self._send(401, {"error": "unauthorized"})
                     return
             key = self.headers.get("Idempotency-Key")
-            if key and key in SEEN_KEYS:
-                self._send(200, {"ok": True, "duplicate": True})
-                return
-            if key:
-                SEEN_KEYS.add(key)
+            with _SEEN_LOCK:
+                if key and key in SEEN_KEYS:
+                    self._send(200, {"ok": True, "duplicate": True})
+                    return
+                if key:
+                    SEEN_KEYS.add(key)
             record = {"received_at_utc": utcnow(), "event": event}
             self._append("events.jsonl", record)
-            result = process_event(event)
-            self._append("alerts.jsonl" if result["decision"] == "PASS" else "dropped.jsonl", result)
-            self._send(200, {"ok": True, "duplicate": False,
-                             "decision": result["decision"], "reason": result["reason"]})
+            # Fast ack: answer 200 NOW. Slow pre-filter + enrich runs
+            # on the bounded worker pool; the request never waits for
+            # a TonAPI call. Queue full -> shed with a logged drop.
+            _ensure_workers(out_dir)
+            try:
+                _WORK_QUEUE.put_nowait(event)
+                self._send(200, {"ok": True, "duplicate": False, "queued": True})
+            except queue.Full:
+                self._append("dropped.jsonl", {
+                    "received_at": utcnow(),
+                    "account_id": event.get("account_id", "unknown"),
+                    "lt": event.get("lt", "not available"),
+                    "tx_hash": event.get("tx_hash", "not available"),
+                    "decision": "DROP", "reason": "queue_full",
+                    "call_count": 0, "calls": []})
+                self._send(200, {"ok": True, "duplicate": False,
+                                 "queued": False, "reason": "queue_full"})
 
         def do_GET(self):
             if self.path == "/health":
